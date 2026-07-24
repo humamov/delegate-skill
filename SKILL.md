@@ -51,7 +51,7 @@ exist; extras are set on demand via targeted "set X to Y" requests):
  "backend":{"executor":"fable-workflow|claude-b-relay|codex|fable-inline","model":"<alias>","effort":"max|high|low",
             "adversarialReview":"always|auth-money-only|never","fallback":["codex"]},
  "test":{"executor":"opus-workflow|fable-workflow|subagent","effort":"high","sandboxOnly":true},
- "strategy":{"lane":"fast|balanced|rigorous","guards":"per-push|per-merge",
+ "strategy":{"lane":"fast|balanced|rigorous","guards":"per-push|per-merge|ask",
              "guardSkills":["clean-code-guard","docs-guard"],
              "maxConcurrentExecutors":6,"autoDeploy":false,
              "stallTimeoutMinutes":10,"failEscalation":"redispatch-once|ask|advisor"},
