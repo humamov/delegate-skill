@@ -21,7 +21,15 @@ assets/progress-template.html # self-rendering progress board template
 
 ## Install
 
-### Claude Code
+### Any agent, one command (recommended)
+```bash
+npx skills add humamov/delegate-skill
+```
+The [skills CLI](https://skills.sh) detects your installed agents (Claude Code, Codex,
+Cursor, …) and installs for the ones you pick. Non-interactive: append `--all` for every
+agent, or `-g -y -a claude-code` style flags. Update later with `npx skills update`.
+
+### Claude Code (manual)
 ```bash
 git clone https://github.com/humamov/delegate-skill ~/.claude/skills/delegate
 ```
