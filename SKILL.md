@@ -143,6 +143,12 @@ blank static snapshot). Steps:
 
    `preview_start` opens a NEW tab every call, so calling it on each append is what piles up dead
    tabs. Treat it as first-time-only.
+3. **NEVER navigate the pane to a filesystem path** — only ever the `http://localhost:<port>/…` URL.
+   Some embedded panes render `file://` (or a bare `/Users/...` path) as a blank page. The template
+   self-heals (a `file:` load shows a banner and hops to the served URL when the server is up), but
+   the skill must not rely on it. After every open/navigate, VERIFY: screenshot or `read_page` —
+   if the page is blank or the URL is not `http://localhost:<port>/…`, start the server and
+   re-navigate before moving on.
 
 So an APPEND is not "just a Refresh you can skip" — you actively re-open/reload the board every time you
 add a task, so the user never has to touch it.
