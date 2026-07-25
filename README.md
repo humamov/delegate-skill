@@ -6,13 +6,14 @@ everything on a live HTML progress board, and verify what the executors land the
 The orchestrating agent never writes feature code itself — it writes briefs, contracts,
 and judgments.
 
-Every task runs in one of two modes. **fast** — dispatch, gates, the executor merges its own
-work; the default, and right for anything cheap to revert. **review** — the executor stops
-before merging, an independent reviewer attacks the diff, the executor fixes what it finds,
-and only then does it land. The guard skills are not part of either mode: they run once on
-the whole pending diff before a push, never per task. Tasks touching auth, money, migrations,
-destructive data operations, public API contracts or deploy pipelines escalate to review on
-their own.
+Every task runs in one of two modes, and the orchestrator ASKS which one before dispatching —
+per task, with a recommendation. **fast** — dispatch, gates, the executor merges its own work;
+right for anything cheap to revert. **review** — the executor stops before merging, an
+independent reviewer attacks the diff, the executor fixes what it finds, and only then does it
+land. Review is the recommended answer for auth, money, migrations, destructive data
+operations, public API contracts and deploy pipelines, but the user's answer always wins. The
+guard skills are not part of either mode: they run once on the whole pending diff before a
+push, never per task.
 
 Per-project setup is interactive: the first invocation in a repo asks which model runs the
 frontend lane, which runs the backend lane, the reasoning effort for each, and the working

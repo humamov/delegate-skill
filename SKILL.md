@@ -26,8 +26,8 @@ Config file: `<repo-root>/.claude/delegate.config.json` — injected above. Thre
    ask the user with AskUserQuestion (at most 2 calls, 4 questions total where possible):
    - **Frontend lane**: executor (`kimi` K3 / `codex` / `grok` / `fable-inline` = orchestrator's own
      model in a one-hop background agent) + its reasoning effort (`max` / `high` / `low`).
-   - **Backend lane**: executor (`fable-workflow` = Workflow with adversarial review / `claude-b-relay` /
-     `codex` / `fable-inline`) + effort.
+   - **Backend lane**: executor (`opus-subagent` = one Opus 5 background subagent per task, the default /
+     `fable-workflow` = Workflow with adversarial review / `claude-b-relay` / `codex` / `fable-inline`) + effort.
    - **Strategy**: `fast` (one-hop implement→gates→merge, adversarial review ONLY for auth/money
      paths, guards once per push) / `balanced` (orchestrator reviews every diff, guards per push) /
      `rigorous` (adversarial multi-lens review on everything, guards per merge). Ask in the same
@@ -49,10 +49,11 @@ exist; extras are set on demand via targeted "set X to Y" requests):
 {"version":1,"product":"<kebab>","configuredAt":"<ISO>",
  "frontend":{"executor":"kimi|codex|grok|fable-inline","model":"<alias>","effort":"max|high|low",
              "fallback":["codex","fable-inline"]},
- "backend":{"executor":"fable-workflow|claude-b-relay|codex|fable-inline","model":"<alias>","effort":"max|high|low",
+ "backend":{"executor":"opus-subagent|fable-workflow|claude-b-relay|codex|fable-inline","model":"<alias>","effort":"max|high|low",
             "adversarialReview":"always|auth-money-only|never","fallback":["codex"]},
  "test":{"executor":"opus-workflow|fable-workflow|subagent","effort":"high","sandboxOnly":true},
- "strategy":{"lane":"fast|balanced|rigorous","defaultMode":"fast|review","guards":"per-push|per-merge|ask",
+ "strategy":{"lane":"fast|balanced|rigorous","defaultMode":"fast|review","askModePerTask":true,
+             "guards":"per-push|per-merge|ask",
              "guardSkills":["clean-code-guard","docs-guard"],
              "maxConcurrentExecutors":6,"autoDeploy":false,
              "stallTimeoutMinutes":10,"failEscalation":"redispatch-once|ask|advisor"},
@@ -80,10 +81,10 @@ they say so and it goes into `.gitignore`.
 
 | Role | Who | Notes |
 |---|---|---|
-| Orchestrator | main session (Fable) | decomposes, writes contracts, reviews, lands. Never writes feature code. |
+| Orchestrator | main session (**Fable 5, lead engineer**) | splits the work into small tasks, writes the brief for each, routes it to the right executor, reviews what comes back (unless the task is `fast`) and combines the results into the finished whole. **Never implements a task itself** — not even a one-liner, not even while waiting on an executor. |
 | Backend executor #2 | **claude-b relay** (second Claude account, BACKEND ONLY — policy 22-jul-2026) | `bash ~/.claude/skills/delegate/scripts/claude-b-relay.sh --brief <f> --cd <repo> --out-dir <d> --model claude-fable-5` — headless Fable 5 under `CLAUDE_CONFIG_DIR=~/.claude-acc2` (separate quota). Same artifact contract as kimi (brief/final/result.json), never commits, orchestrator lands. FRONTEND never routes here — frontend stays kimi (codex only if kimi is truly down). Relay-built backend work gets an orchestrator-added adversarial review before landing. |
 | Frontend executor | `/kimi-delegate` | brief-driven; owns only its file scope. **Max effort standing policy (20-jul-2026):** relay pinned to Kimi K3 at max thinking effort (`default_thinking = true` in `~/.kimi/config.toml`; overridable via `KIMI_RELAY_MODEL` / `KIMI_MODEL_THINKING_EFFORT`). **Run frontend tasks in PARALLEL** — up to `MAX_CONCURRENT_EXECUTORS`, same as backend — provided each relay owns a disjoint file scope. (A one-at-a-time rule was in force 20-jul-2026 after a single unexplained instant exit-1; the relay's only shared state was its artifact dir, now pid+entropy-suffixed. If a relay dies instantly with no output, capture stderr and retry once — do not serialize the whole queue on it.) |
-| Backend executor | **Fable 5 MAX ultracode workflow** (Workflow tool) — standing policy 22-jul-2026, supersedes the Opus-4.8 setting | model `'fable'`, effort `'max'` agents: implement in an isolated worktree → 3 parallel adversarial review lenses (correctness / authz-security / test-quality) → fix confirmed findings → gates (lint+tsc+jest, never builds). Backend runs on BOTH Claude accounts at Fable 5 max: account A = this Workflow lane; account B = the claude-b relay (`--model claude-fable-5`) as a standing parallel backend lane — split independent backend tasks across the two for wall-clock. Relay runs lack the workflow's review fan-out, so the orchestrator adds an adversarial review pass before landing relay-built backend work. Fallback if both Claude lanes are unavailable: `/codex-delegate`. FRONTEND never uses the Claude lanes — kimi only (codex if kimi is down). |
+| Backend executor | **Opus 5 subagent, effort `high`** (Agent tool, `run_in_background`) — standing policy 25-jul-2026, supersedes the Fable-5-workflow setting | one subagent per backend task, model `opus`, effort `high`, dispatched in parallel up to `MAX_CONCURRENT_EXECUTORS`. It implements, runs the project `gates`, and lands its own task (commit → merge → report hashes). It does NOT review itself: in `review` mode a separate agent that did not write the code reviews the diff before the merge. Use the claude-b relay as a second backend lane when the queue is long enough to need one. Fallback if the Claude lanes are unavailable: `/codex-delegate`. FRONTEND never routes here — kimi only (codex if kimi is truly down). |
 | Test/E2E executor | **Opus 4.8 ultracode workflow** (Workflow tool) | standing policy (20-jul-2026): E2E rounds, TestSprite loops, and verification tasks run as model `'opus'` workflows — fan out one agent per scenario group (auth, payments, UI states…), then a completeness-critic agent asks "which flow/state wasn't exercised?" and its findings become the next fan-out. Hard rule: no real money, test/sandbox gateways only. Fallback: plain background subagent. |
 | Progress tracker | `progress-tracker` agent (Sonnet) | sole owner of the HTML board — the orchestrator NEVER edits the board file directly |
 
@@ -120,13 +121,24 @@ criteria and the project constraints, and the executor fixes what it finds. Only
 Use it where a bad outcome is expensive or hard to unwind. (The guard skills are a PUSH gate, not
 part of this mode — see step 2.)
 
-How a mode gets chosen:
-- The user names it — `/delegate review: <task>` / `/delegate fast: <task>`, or just "review mode".
-- Otherwise `strategy.defaultMode` from config.
-- **Auto-escalate to `review`, even when `fast` was asked for**, when the task touches auth or
-  sessions, money or balances, a DB migration or any destructive data operation, a public API
-  contract, or a deploy pipeline. Say so in one line ("escalated to review: touches the deposit
-  path") — the user can still override back to fast, and that override stands.
+**ASK THE USER THE MODE FOR EVERY TASK — do not pick it silently.** After decomposition and before
+dispatch, one `AskUserQuestion` call carries the mode question for up to 4 tasks (batch them; more
+than 4 tasks means a second call). Each question names the task and offers `fast` / `review`, and
+each option's description says what that choice costs and buys FOR THAT TASK, not in the abstract:
+
+> **Q:** "Dealer payments filters — fast or review?"
+> `Fast (Recommended)` — one kimi pass, gates, self-merge. A bad result is one revert.
+> `Review` — an independent agent attacks the diff first. ~2–3× the wall clock.
+
+Mark the recommendation with `(Recommended)` on the option you'd pick, and recommend `review`
+whenever the task touches auth or sessions, money or balances, a DB migration or any destructive
+data operation, a public API contract, or a deploy pipeline. The user's answer always wins over the
+recommendation — including "fast" on a money path.
+
+Two shortcuts, and only these: the user pre-names the mode in the request ("all fast", "review the
+backend one"), or a follow-up in the same session repeats a task you already asked about. Anything
+else gets asked. `strategy.defaultMode` is only the recommendation's starting point, never a licence
+to skip the question.
 
 A mode is per-task, not per-run: one story can hold three `fast` children and one `review` child.
 
@@ -157,10 +169,11 @@ not when the rest of its wave finishes. Re-check the graph on every executor not
 whose blockers are only partially relevant gets split so the free part launches now. Serialization is
 the exception and needs a stated reason (shared file, true data dependency).
 
-Lanes come from config, falling back to the Roles table: frontend → `/kimi-delegate`, backend → the
-**Fable 5 MAX ultracode Workflow** (per-task; its isolated worktree also dissolves shared-file
-serialization between backend tasks), with the claude-b relay as the standing second backend lane.
-These backend workflows are standing-authorized — no per-task opt-in needed.
+Lanes come from config, falling back to the Roles table: frontend → `/kimi-delegate` (Kimi K3, max
+effort), backend → **one Opus 5 subagent per task at `high` effort**, `run_in_background`. Both fan
+out in parallel up to `MAX_CONCURRENT_EXECUTORS`; give concurrent tasks disjoint file scopes, or a
+worktree each. These lanes are standing-authorized — no per-task opt-in needed (the only per-task
+question is the MODE, which is always asked).
 
 - `MAX_CONCURRENT_EXECUTORS = 6` (visible constant — respect it when launching).
 
@@ -264,8 +277,15 @@ Each executor already gated, committed and merged its own task — in `review` m
 reviewer passed (step 2) — so close-out is verification, not labour: read the reported hashes, check the merged diff against the acceptance
 criteria, and RE-RUN the gates yourself — never trust an executor's self-report of its own gates.
 An executor that reports done without hashes has not landed; ask it for them before marking `done`.
-On failure: ONE re-delegation with concrete feedback, then mark `failed`. When all tasks are
-terminal: final tracker update, then a compact summary + the board path.
+On failure: ONE re-delegation with concrete feedback, then mark `failed`.
+
+**Then COMBINE — the last job that is yours alone.** Separately-correct tasks do not add up to a
+working whole on their own: check the seams the executors could not see. Does the frontend call the
+endpoint the backend actually shipped, with the field names it actually returns? Do two tasks
+duplicate a helper, or leave a half-migrated pattern? Does the feature work end to end, not just
+per task? Fix seam defects yourself — integration IS the lead engineer's work, unlike feature code —
+or dispatch a delta task when the fix belongs inside one task's scope. Only after the seams hold:
+final tracker update, then a compact summary + the board path.
 
 ## Tracker payload examples
 
