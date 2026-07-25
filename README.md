@@ -2,8 +2,16 @@
 
 Orchestrate delegated coding work end-to-end: decompose into tasks, dispatch each to a
 configured executor (Kimi K3 / Codex / Grok / a second Claude account / inline), track
-everything on a live HTML progress board, review and land the results. The orchestrating
-agent never writes feature code itself — it writes briefs, contracts, and judgments.
+everything on a live HTML progress board, and verify what the executors land themselves.
+The orchestrating agent never writes feature code itself — it writes briefs, contracts,
+and judgments.
+
+Every task runs in one of two modes. **fast** — dispatch, gates, the executor merges its own
+work; the default, and right for anything cheap to revert. **review** — the executor stops
+before merging, an independent reviewer attacks the diff, the executor fixes what it finds,
+the guard skills run, and only then does it land. Tasks touching auth, money, migrations,
+destructive data operations, public API contracts or deploy pipelines escalate to review on
+their own.
 
 Per-project setup is interactive: the first invocation in a repo asks which model runs the
 frontend lane, which runs the backend lane, the reasoning effort for each, and the working

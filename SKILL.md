@@ -30,7 +30,8 @@ Config file: `<repo-root>/.claude/delegate.config.json` — injected above. Thre
      `codex` / `fable-inline`) + effort.
    - **Strategy**: `fast` (one-hop implement→gates→merge, adversarial review ONLY for auth/money
      paths, guards once per push) / `balanced` (orchestrator reviews every diff, guards per push) /
-     `rigorous` (adversarial multi-lens review on everything, guards per merge).
+     `rigorous` (adversarial multi-lens review on everything, guards per merge). Ask in the same
+     question which TASK MODE is the default — `fast` or `review` (see "Task modes" below).
    - **Extras**: test/E2E lane executor, `maxConcurrentExecutors`, `autoDeploy` after push (yes/no).
    Then WRITE the file (schema below), confirm in one line, and continue with the actual work (or
    stop if the invocation was setup-only).
@@ -51,7 +52,7 @@ exist; extras are set on demand via targeted "set X to Y" requests):
  "backend":{"executor":"fable-workflow|claude-b-relay|codex|fable-inline","model":"<alias>","effort":"max|high|low",
             "adversarialReview":"always|auth-money-only|never","fallback":["codex"]},
  "test":{"executor":"opus-workflow|fable-workflow|subagent","effort":"high","sandboxOnly":true},
- "strategy":{"lane":"fast|balanced|rigorous","guards":"per-push|per-merge|ask",
+ "strategy":{"lane":"fast|balanced|rigorous","defaultMode":"fast|review","guards":"per-push|per-merge|ask",
              "guardSkills":["clean-code-guard","docs-guard"],
              "maxConcurrentExecutors":6,"autoDeploy":false,
              "stallTimeoutMinutes":10,"failEscalation":"redispatch-once|ask|advisor"},
@@ -104,6 +105,31 @@ user can correct a wrong guess **before** delegation starts. Classification:
   comes first and gates everything.
 - Ambiguous → treat as **story**.
 
+## Task modes — fast or review
+
+Every task runs in one of two modes. Announce which one alongside the scope line, so a wrong pick
+costs a word to correct rather than a whole run.
+
+**`fast`** — dispatch → executor gates → self-land. One executor, no reviewer, no guards. This is the
+default (`strategy.defaultMode`) and it is right for most work: UI tweaks, copy, styling, filters,
+a contained bug fix — anything a bad outcome is cheap to revert.
+
+**`review`** — the same dispatch, plus two things before the merge: an INDEPENDENT reviewer
+(a separate agent that never wrote the code) checks the diff adversarially against the acceptance
+criteria and the project constraints, the executor fixes what it finds, and then the configured
+`guardSkills` run on the diff. Only after both does it land. Use it where a bad outcome is expensive
+or hard to unwind.
+
+How a mode gets chosen:
+- The user names it — `/delegate review: <task>` / `/delegate fast: <task>`, or just "review mode".
+- Otherwise `strategy.defaultMode` from config.
+- **Auto-escalate to `review`, even when `fast` was asked for**, when the task touches auth or
+  sessions, money or balances, a DB migration or any destructive data operation, a public API
+  contract, or a deploy pipeline. Say so in one line ("escalated to review: touches the deposit
+  path") — the user can still override back to fast, and that override stands.
+
+A mode is per-task, not per-run: one story can hold three `fast` children and one `review` child.
+
 ## Pipeline
 
 ### 1. DECOMPOSE — parallel-first
@@ -119,7 +145,54 @@ audit that may add more — the additions become a delta brief). Accept small pa
 itself) that precedes the fan-out — the frontend builds against the contract, not the backend's
 in-flight code.
 
-### 2. CREATE BOARD
+### 2. DISPATCH — one wave, no phases
+
+**Dispatch comes BEFORE the board.** In the turn that follows decomposition, every task with no unmet
+dependency goes out as a background executor, and only THEN does the tracker call go out — in that
+same turn, after the dispatches. The board is a mirror of work already running, never a gate in front
+of it. A run that reports "board created" before an executor is running got the order wrong.
+
+There are no phases and no barriers. A blocked task launches the moment its own blocker reports —
+not when the rest of its wave finishes. Re-check the graph on every executor notification: any task
+whose blockers are only partially relevant gets split so the free part launches now. Serialization is
+the exception and needs a stated reason (shared file, true data dependency).
+
+Lanes come from config, falling back to the Roles table: frontend → `/kimi-delegate`, backend → the
+**Fable 5 MAX ultracode Workflow** (per-task; its isolated worktree also dissolves shared-file
+serialization between backend tasks), with the claude-b relay as the standing second backend lane.
+These backend workflows are standing-authorized — no per-task opt-in needed.
+
+- `MAX_CONCURRENT_EXECUTORS = 6` (visible constant — respect it when launching).
+
+**Every brief is prescriptive or it does not go out.** Before dispatching, check the brief has all
+five; if any is missing, write it first — an executor that has to go find these burns 20 minutes
+before its first edit:
+1. the exact files to change (paths, not "the payments module"),
+2. the exact change per file (what to add/remove, named symbols),
+3. 2–4 checkable acceptance criteria,
+4. the project `briefs.constraints` from config,
+5. the literal lines **"Do not research the codebase — the files above are the whole scope"** and
+   **"Do not modify files outside your scope."**
+
+**The executor lands its own work.** Its brief ends with: run the configured `gates`, commit on
+`<branchPrefix><task-id>`, merge to the main branch, and report the commit and merge hashes. No
+separate lander, no watcher parked on a finished task — those are what died across context resumes
+and left verified work sitting unmerged. The orchestrator verifies the landing (diff + gates) at
+close-out; it does not perform it.
+
+**In `review` mode the executor stops one step short**: gates and commit, but NO merge — it reports
+the branch and commit hash instead. Then, before anything lands:
+1. An independent reviewer agent (never the one that wrote the code) gets the diff, the acceptance
+   criteria and the project constraints, and is told to look for what is WRONG — correctness, the
+   money/auth path, missed criteria, constraint violations.
+2. Real findings go back to the original executor as a delta brief; it fixes and re-gates.
+3. The configured `guardSkills` run on the final diff; must-fix findings are fixed the same way.
+4. Only then does it merge — the executor merges its own branch, same as fast mode.
+
+Shared files between parallel tasks: re-scope so ownership is exclusive, serialize the tasks, or give
+each a git worktree. Never let two executors edit one file concurrently.
+
+### 3. BOARD — right after dispatch, same turn
 
 One `progress-tracker` call with the FULL tree upfront (project node if any + items + tasks, all
 `pending`). Board path: `progress/<product-kebab>-<date>.html` (repo-relative), template:
@@ -153,34 +226,17 @@ blank static snapshot). Steps:
 So an APPEND is not "just a Refresh you can skip" — you actively re-open/reload the board every time you
 add a task, so the user never has to touch it.
 
-### 3. DELEGATE IN PHASES
-
-Everything with no unmet dependencies launches together, each executor run as a **background task**
-so they run concurrently. Before each phase, re-check the dependency graph: any task whose blockers
-are only partially relevant gets split and its free part launched. Serialization is the exception
-and needs a stated reason (shared file, true data dependency). Frontend → `/kimi-delegate`, backend → an
-**Opus 4.8 ultracode Workflow** (per-task; the Workflow's isolated worktree also dissolves shared-file
-serialization between backend tasks — land reconciles). The user has standing-authorized these backend
-workflows ("opus 4.8 ultracode and fast", 20-jul-2026) — no per-task opt-in needed.
-
-- `MAX_CONCURRENT_EXECUTORS = 6` (visible constant — respect it when launching a phase).
-
 **Speed rules (wall-clock is the metric):**
-- Board creation and phase-1 dispatch go out in the SAME turn as parallel tool calls — never wait for
-  the tracker to reply before launching executors.
 - One turn = every independent dispatch you can make. Never launch tasks one per turn.
 - Don't poll a background task you were notified about; act on the notification.
 - The board's own metrics are the feedback loop: if a task's minutes are wildly above its siblings',
   it was under-decomposed — split it next time.
-- Every delegation prompt includes: task id + title, the acceptance criteria, the relevant contract
-  slice, the owned file scope, and the line **"Do not modify files outside your scope."**
-- Shared files between parallel tasks: re-scope so ownership is exclusive, serialize the tasks, or
-  give each a git worktree. Never let two executors edit one file concurrently.
 
 ### 4. TRACK — state transitions only, EVERY task on the board
 
 EVERY unit of delegated or ad-hoc work — however small (a styling tweak, a one-line fix, a
-config change) — gets a board task entry BEFORE or WITH its dispatch. Micro-tasks that don't fit
+config change) — gets a board task entry in the same turn as its dispatch, right after it, never
+before it (see step 2 — the board never gates a dispatch). Micro-tasks that don't fit
 an active story go under a daily "Ad-hoc requests" story (create it on first use, append after).
 Nothing ships untracked.
 
@@ -200,9 +256,12 @@ from `git diff --shortstat <base>..HEAD` on that task's branch or worktree. Boar
 
 ### 5. CLOSE OUT
 
-Review each result against its acceptance criteria at diff level (the orchestrator re-runs gates —
-never trust executor self-reports). On failure: ONE re-delegation with concrete feedback, then mark
-`failed`. When all tasks are terminal: final tracker update, then a compact summary + the board path.
+Each executor already gated, committed and merged its own task — in `review` mode after the
+reviewer and guards passed (step 2) — so close-out is verification, not labour: read the reported hashes, check the merged diff against the acceptance
+criteria, and RE-RUN the gates yourself — never trust an executor's self-report of its own gates.
+An executor that reports done without hashes has not landed; ask it for them before marking `done`.
+On failure: ONE re-delegation with concrete feedback, then mark `failed`. When all tasks are
+terminal: final tracker update, then a compact summary + the board path.
 
 ## Tracker payload examples
 

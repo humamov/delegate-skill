@@ -67,13 +67,20 @@ h1{font-size:20px;margin:0}
 </style>
 </head>
 <body>
-<div class="wrap" id="app"></div>
+<div class="wrap" id="app"><div id="serve-note" style="max-width:720px;margin:40px auto;padding:24px;border:1px solid #444;border-radius:12px;font-family:ui-monospace,monospace;line-height:1.7;color:#ddd;background:#1c1c22">
+<strong style="font-size:16px">&#9888;&#65039; This board was opened as a file &mdash; it must be viewed through its local server.</strong><br><br>
+1. Start the server (once):<br>
+<code style="background:#111;padding:2px 6px;border-radius:4px">cd &lt;repo&gt;/progress &amp;&amp; python3 -m http.server 8123</code><br><br>
+2. Then open: <a href="http://localhost:8123/" style="color:#7aa2ff;font-weight:600">http://localhost:8123/</a> and click the board file.<br><br>
+<span style="color:#888">(When the board is served correctly, this notice never appears.)</span>
+</div></div>
 
 <script id="progress-data" type="application/json">
 {"product":"","date":"","updatedAt":"","projects":[],"items":[]}
 </script>
 
 <script>
+document.getElementById('serve-note')?.remove();
 const D = JSON.parse(document.getElementById('progress-data').textContent);
 // file:// self-heal: the board must be viewed over its local server (some
 // embedded browser panes render file:// as a blank page). If the server is up
