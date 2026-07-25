@@ -110,15 +110,15 @@ user can correct a wrong guess **before** delegation starts. Classification:
 Every task runs in one of two modes. Announce which one alongside the scope line, so a wrong pick
 costs a word to correct rather than a whole run.
 
-**`fast`** — dispatch → executor gates → self-land. One executor, no reviewer, no guards. This is the
+**`fast`** — dispatch → executor gates → self-land. One executor, no reviewer. This is the
 default (`strategy.defaultMode`) and it is right for most work: UI tweaks, copy, styling, filters,
 a contained bug fix — anything a bad outcome is cheap to revert.
 
-**`review`** — the same dispatch, plus two things before the merge: an INDEPENDENT reviewer
+**`review`** — the same dispatch, plus one thing before the merge: an INDEPENDENT reviewer
 (a separate agent that never wrote the code) checks the diff adversarially against the acceptance
-criteria and the project constraints, the executor fixes what it finds, and then the configured
-`guardSkills` run on the diff. Only after both does it land. Use it where a bad outcome is expensive
-or hard to unwind.
+criteria and the project constraints, and the executor fixes what it finds. Only then does it land.
+Use it where a bad outcome is expensive or hard to unwind. (The guard skills are a PUSH gate, not
+part of this mode — see step 2.)
 
 How a mode gets chosen:
 - The user names it — `/delegate review: <task>` / `/delegate fast: <task>`, or just "review mode".
@@ -186,8 +186,12 @@ the branch and commit hash instead. Then, before anything lands:
    criteria and the project constraints, and is told to look for what is WRONG — correctness, the
    money/auth path, missed criteria, constraint violations.
 2. Real findings go back to the original executor as a delta brief; it fixes and re-gates.
-3. The configured `guardSkills` run on the final diff; must-fix findings are fixed the same way.
-4. Only then does it merge — the executor merges its own branch, same as fast mode.
+3. Only then does it merge — the executor merges its own branch, same as fast mode.
+
+`guardSkills` are NOT part of either mode. They run ONCE on the whole pending diff at the boundary
+`strategy.guards` names — `per-push` / `ask` means before a push, `per-merge` before a merge —
+never once per task. Guarding each task re-sweeps the same files for the same findings and buys
+nothing; the diff that matters is the one about to leave the machine.
 
 Shared files between parallel tasks: re-scope so ownership is exclusive, serialize the tasks, or give
 each a git worktree. Never let two executors edit one file concurrently.
@@ -257,7 +261,7 @@ from `git diff --shortstat <base>..HEAD` on that task's branch or worktree. Boar
 ### 5. CLOSE OUT
 
 Each executor already gated, committed and merged its own task — in `review` mode after the
-reviewer and guards passed (step 2) — so close-out is verification, not labour: read the reported hashes, check the merged diff against the acceptance
+reviewer passed (step 2) — so close-out is verification, not labour: read the reported hashes, check the merged diff against the acceptance
 criteria, and RE-RUN the gates yourself — never trust an executor's self-report of its own gates.
 An executor that reports done without hashes has not landed; ask it for them before marking `done`.
 On failure: ONE re-delegation with concrete feedback, then mark `failed`. When all tasks are

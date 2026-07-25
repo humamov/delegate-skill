@@ -9,7 +9,8 @@ and judgments.
 Every task runs in one of two modes. **fast** — dispatch, gates, the executor merges its own
 work; the default, and right for anything cheap to revert. **review** — the executor stops
 before merging, an independent reviewer attacks the diff, the executor fixes what it finds,
-the guard skills run, and only then does it land. Tasks touching auth, money, migrations,
+and only then does it land. The guard skills are not part of either mode: they run once on
+the whole pending diff before a push, never per task. Tasks touching auth, money, migrations,
 destructive data operations, public API contracts or deploy pipelines escalate to review on
 their own.
 
