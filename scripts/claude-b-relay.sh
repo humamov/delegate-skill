@@ -11,7 +11,9 @@ while [ $# -gt 0 ]; do
     --brief)   BRIEF="$2";  shift 2 ;;
     --cd)      WORKDIR="$2"; shift 2 ;;
     --out-dir) OUTDIR="$2"; shift 2 ;;
-    --model)   MODEL="$2";  shift 2 ;;   # backend briefs pass claude-fable-5 (standing policy 22-jul-2026)
+    --model)   MODEL="$2";  shift 2 ;;   # claude-opus-5 by default; claude-fable-5 only when the
+                                          # orchestrator flags the task "hard" (Model tiering, 27-jul-2026 —
+                                          # supersedes the old claude-fable-5-by-default policy of 22-jul-2026)
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done

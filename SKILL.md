@@ -51,7 +51,7 @@ exist; extras are set on demand via targeted "set X to Y" requests):
              "fallback":["codex","fable-inline"]},
  "backend":{"executor":"opus-subagent|fable-workflow|claude-b-relay|codex|fable-inline","model":"<alias>","effort":"max|high|low",
             "adversarialReview":"always|auth-money-only|never","fallback":["codex"]},
- "test":{"executor":"opus-workflow|fable-workflow|subagent","effort":"high","sandboxOnly":true},
+ "test":{"executor":"opus-subagent|fable-workflow|subagent","effort":"high","sandboxOnly":true},
  "strategy":{"lane":"fast|balanced|rigorous","defaultMode":"fast|review","askModePerTask":true,
              "guards":"per-push|per-merge|ask",
              "guardSkills":["clean-code-guard","docs-guard"],
@@ -60,7 +60,7 @@ exist; extras are set on demand via targeted "set X to Y" requests):
  "briefs":{"style":"prescriptive|exploratory","constraints":["<project rules injected into every executor brief>"]},
  "git":{"branchPrefix":"claude/","mergeStyle":"no-ff","coAuthor":"Claude <noreply@anthropic.com>"},
  "gates":{"frontend":["npx tsc --noEmit","npm run lint"],"backend":["npm run build","npx jest --silent"]},
- "board":{"port":8123,"autoOpen":true},
+ "board":{"autoOpen":true},
  "notifications":{"onFail":true,"onAllDone":true,"onLaneDone":false}}
 ```
 
@@ -82,11 +82,60 @@ they say so and it goes into `.gitignore`.
 | Role | Who | Notes |
 |---|---|---|
 | Orchestrator | main session (**Fable 5, lead engineer**) | splits the work into small tasks, writes the brief for each, routes it to the right executor, reviews what comes back (unless the task is `fast`) and combines the results into the finished whole. **Never implements a task itself** — not even a one-liner, not even while waiting on an executor. |
-| Backend executor #2 | **claude-b relay** (second Claude account, BACKEND ONLY — policy 22-jul-2026) | `bash ~/.claude/skills/delegate/scripts/claude-b-relay.sh --brief <f> --cd <repo> --out-dir <d> --model claude-fable-5` — headless Fable 5 under `CLAUDE_CONFIG_DIR=~/.claude-acc2` (separate quota). Same artifact contract as kimi (brief/final/result.json), never commits, orchestrator lands. FRONTEND never routes here — frontend stays kimi (codex only if kimi is truly down). Relay-built backend work gets an orchestrator-added adversarial review before landing. |
+| Backend executor #2 | **claude-b relay** (second Claude account, BACKEND ONLY — policy 22-jul-2026) | `bash ~/.claude/skills/delegate/scripts/claude-b-relay.sh --brief <f> --cd <repo> --out-dir <d> --model claude-opus-5` — headless Opus 5 by default under `CLAUDE_CONFIG_DIR=~/.claude-acc2` (separate quota); pass `--model claude-fable-5` only when the orchestrator flags the task "hard" (Model tiering, below — supersedes this row's old Fable-by-default policy). Same artifact contract as kimi (brief/final/result.json), never commits — a Sonnet lander sub-agent lands it (Model tiering, Landers row), not Fable itself. FRONTEND never routes here — frontend stays kimi (codex only if kimi is truly down). Relay-built backend work gets an orchestrator-added adversarial review before landing. |
 | Frontend executor | `/kimi-delegate` | brief-driven; owns only its file scope. **Max effort standing policy (20-jul-2026):** relay pinned to Kimi K3 at max thinking effort (`default_thinking = true` in `~/.kimi/config.toml`; overridable via `KIMI_RELAY_MODEL` / `KIMI_MODEL_THINKING_EFFORT`). **Run frontend tasks in PARALLEL** — up to `MAX_CONCURRENT_EXECUTORS`, same as backend — provided each relay owns a disjoint file scope. (A one-at-a-time rule was in force 20-jul-2026 after a single unexplained instant exit-1; the relay's only shared state was its artifact dir, now pid+entropy-suffixed. If a relay dies instantly with no output, capture stderr and retry once — do not serialize the whole queue on it.) |
-| Backend executor | **Opus 5 subagent, effort `high`** (Agent tool, `run_in_background`) — standing policy 25-jul-2026, supersedes the Fable-5-workflow setting | one subagent per backend task, model `opus`, effort `high`, dispatched in parallel up to `MAX_CONCURRENT_EXECUTORS`. It implements, runs the project `gates`, and lands its own task (commit → merge → report hashes). It does NOT review itself: in `review` mode a separate agent that did not write the code reviews the diff before the merge. Use the claude-b relay as a second backend lane when the queue is long enough to need one. Fallback if the Claude lanes are unavailable: `/codex-delegate`. FRONTEND never routes here — kimi only (codex if kimi is truly down). |
-| Test/E2E executor | **Opus 4.8 ultracode workflow** (Workflow tool) | standing policy (20-jul-2026): E2E rounds, TestSprite loops, and verification tasks run as model `'opus'` workflows — fan out one agent per scenario group (auth, payments, UI states…), then a completeness-critic agent asks "which flow/state wasn't exercised?" and its findings become the next fan-out. Hard rule: no real money, test/sandbox gateways only. Fallback: plain background subagent. |
-| Progress tracker | `progress-tracker` agent (Sonnet) | sole owner of the HTML board — the orchestrator NEVER edits the board file directly |
+| Backend executor | **Opus 5 subagent, effort `high`** (Agent tool, `run_in_background`) — standing policy 25-jul-2026 | one subagent per backend task, model `opus`, effort `high`, dispatched in parallel up to `MAX_CONCURRENT_EXECUTORS`. It implements, runs the project `gates`, and lands its own task (commit → merge → report hashes). It does NOT review itself: in `review` mode a separate agent that did not write the code reviews the diff before the merge. Route every Claude-lane dispatch through the **account balancing rule** (section below — both accounts eligible, policy 27-jul-2026). Fallback if the Claude lanes are unavailable: `/codex-delegate`. FRONTEND never routes here — kimi only (codex if kimi is truly down). |
+| Test/E2E executor | **Opus 5 subagents, effort `high`** (Agent tool, run_in_background) — standing policy 26-jul-2026 | one background subagent per scenario group (auth, payments, UI states…) plus a completeness-critic subagent (which flow was never exercised?) whose findings drive the next fan-out. Hard rule: no real money, test/sandbox gateways only. Fallback: plain background subagent. |
+| Progress tracker | `progress-tracker` agent (**Sonnet 5, enforced**) | sole owner of the HTML board — the orchestrator NEVER edits the board file directly. Every tracker invocation passes `model: 'sonnet'` EXPLICITLY on the Agent call (user directive 27-jul-2026: never spend Fable on board edits), and long-lived tracker pins are not resumed across many updates — spawn fresh per batch so the model pin is certain. |
+
+### Model tiering (policy 27-jul-2026 — "Fable only where judgment changes the outcome")
+
+| Work | Model / lane (pin EXPLICITLY on every dispatch) |
+|---|---|
+| Orchestration: briefs, contracts, routing, incident judgment | Fable (the main session itself) |
+| Adversarial reviews on auth / money / migrations / public contracts | **Fable** (its highest-value use) |
+| Backend implementation subagents | Opus, effort high |
+| claude-b relay default | **Opus** (`--model claude-opus-5`); `claude-fable-5` ONLY when the orchestrator flags the task "hard" |
+| Landers / closers / runners (gates, commits, merges, deploy watch, prod curls) | **Sonnet** (`model: 'sonnet'`) |
+| Browser-verify passes (incl. visual judgment) | Sonnet — part of the same Sonnet lander, no split |
+| **Guard passes (clean-code-guard + docs-guard per push)** | **Codex** (`codex exec` review pass over the diff — separate quota, review is its role) |
+| Tracker, board syncs, quota glue, ops scripts | Sonnet, enforced |
+| All frontend | kimi — never a Claude lane |
+
+Never let a background agent inherit the session model implicitly — every Agent call carries an
+explicit `model`, every relay an explicit `--model`.
+
+### Claude account balancing (policy 27-jul-2026 — both accounts eligible)
+
+Two Claude Code accounts serve the Claude lanes: **acc-A** = the main session's account (every
+in-session background subagent inherits it) and **acc-B** = the claude-b relay
+(`CLAUDE_CONFIG_DIR=~/.claude-acc2`). Keep their quota burn equal or close to equal:
+
+1. **Ensure the loop is running once per machine** — it's meant to be started with `nohup` and
+   forgotten, and no-ops a second start via its own pid-lock: `pgrep -f quota-loop.sh >/dev/null ||
+   nohup ~/.claude/skills/delegate/scripts/quota-loop.sh progress >/dev/null 2>&1 &`.
+   **Before each Claude-lane dispatch**, read `progress/quota.json` — a plain inline file read,
+   NEVER a dispatched agent or task (the 5-min quota loop already maintains the file; user
+   directive 27-jul-2026: the board's data IS the source, don't re-check via agents). Only if the
+   file is older than ~10 min run the probe directly (`node
+   ~/.claude/skills/delegate/scripts/quota-probe.mjs --out progress`) as a foreground one-liner. An
+   account's **effective load** = the max of its rolling-window percentages (5h, weekly, and the
+   model-specific weekly bar when present — e.g. WEEKLY·FABLE). If an account's entry comes back as
+   token totals instead of a percentage (its OAuth usage fetch failed and the transcript-scan
+   fallback took over), treat that account's load as unknown and prefer the other one until a
+   percentage reading returns.
+2. **Route to the lower-load account.** acc-A executes as an in-session background subagent
+   (model per lane); acc-B executes via the claude-b relay (`--model claude-opus-5` by default,
+   `claude-fable-5` only when the orchestrator flags the task "hard" — Model tiering above).
+   Within ±5 points treat them as equal and prefer acc-A (no relay overhead, richer tooling);
+   beyond that, the lower account wins — including review-mode work (relay-built work keeps the
+   orchestrator-added adversarial review before landing, as always).
+3. **Frontend never balances into Claude lanes** — the kimi rule is untouched, and claude-b stays
+   BACKEND ONLY.
+4. **Visibility:** note the executing account (`acc-a` / `acc-b`) in the board card note so drift
+   is auditable next to the Quota tab's two bars.
+5. **Hard signals beat the arithmetic:** a 429 or limit banner on one account routes the task to
+   the other immediately (note it on the board), then the normal `*.fallback` order applies.
 
 ## Input
 
@@ -170,7 +219,7 @@ whose blockers are only partially relevant gets split so the free part launches 
 the exception and needs a stated reason (shared file, true data dependency).
 
 Lanes come from config, falling back to the Roles table: frontend → `/kimi-delegate` (Kimi K3, max
-effort), backend → **one Opus 5 subagent per task at `high` effort**, `run_in_background`. Both fan
+effort), backend → **one Opus 5 subagent per task at `high` effort** (Agent tool, `run_in_background`) — the standing DEFAULT as of 26-jul-2026 (Workflow is no longer the fallback; `backend.executor: "fable-workflow"` in config still selects it explicitly). Both fan
 out in parallel up to `MAX_CONCURRENT_EXECUTORS`; give concurrent tasks disjoint file scopes, or a
 worktree each. These lanes are standing-authorized — no per-task opt-in needed (the only per-task
 question is the MODE, which is always asked).
@@ -216,32 +265,33 @@ One `progress-tracker` call with the FULL tree upfront (project node if any + it
 `~/.claude/skills/delegate/assets/progress-template.html`. If a board for the same product+date
 already exists, APPEND to it (tracker merges). Tell the user the board path immediately.
 
-**Open the board in the browser — do this in the SAME turn on EVERY board create AND every append**
-(i.e. whenever a new task lands on the board), not just the first time. The user monitors delegated
-work live from the page, not chat, so the board must be visibly open whenever work is added. The board
-renders itself with JS, so it must be **served, not opened via `file://`** (a `file://` load shows a
-blank static snapshot). Steps:
-1. Ensure the server is up: `curl -s -o /dev/null -w '%{http_code}' http://localhost:<port>/<product>-<date>.html`
-   → if not `200`, start it: `cd <repo>/progress && (nohup python3 -m http.server <port> >/tmp/<product>-board.log 2>&1 &)`.
-   Ports: Cashier `8123`, FinFlow `8124`; pick a stable per-product port for others.
-2. **ONE board tab, ever — reuse it, never open a second.** Always call
-   `mcp__Claude_Browser__tabs_context` FIRST:
-   - a tab already on `http://localhost:<port>` → `navigate` THAT `tabId` to the board URL (this
-     reloads it with fresh data). Done — no `preview_start`.
-   - no such tab → `preview_start` once, and remember the returned `tabId` for the rest of the session.
-   - more than one board tab somehow exists → `tabs_close` the extras, keep the active one.
+**Open the board as a PLAIN FILE — never through a server, never through localhost.** The board is
+self-contained (its data lives in the embedded JSON island), so the user's own browser renders it
+straight from disk:
 
-   `preview_start` opens a NEW tab every call, so calling it on each append is what piles up dead
-   tabs. Treat it as first-time-only.
-3. **NEVER navigate the pane to a filesystem path** — only ever the `http://localhost:<port>/…` URL.
-   Some embedded panes render `file://` (or a bare `/Users/...` path) as a blank page. The template
-   self-heals (a `file:` load shows a banner and hops to the served URL when the server is up), but
-   the skill must not rely on it. After every open/navigate, VERIFY: screenshot or `read_page` —
-   if the page is blank or the URL is not `http://localhost:<port>/…`, start the server and
-   re-navigate before moving on.
+1. On every board create AND every append, run: `open <repo>/progress/<product>-<date>.html` —
+   this opens (or re-focuses) the file in the user's default browser as a `file://` page. No
+   `python3 -m http.server`, no port, no `http://localhost` URL, ever. (Standing user directive,
+   26-jul-2026 — it supersedes the old serve-on-8123 ritual.)
+2. Do NOT open boards in the session's embedded Browser pane: it does not run JavaScript for file
+   pages and shows the fallback banner instead of the board. The pane is for the product app, not
+   the board. Verify a board by checking the file exists and, if needed, by reading its JSON island
+   — not by screenshotting the pane.
+3. The Quota tab works from a plain file too: the probe writes `quota.js` (a `window.__QUOTA__`
+   script) beside `quota.json`, and the board loads it with a cache-busted `<script src>` because
+   `fetch()` is blocked on `file://` pages. Keep the quota loop pointed at the same `progress/`
+   directory so both files stay fresh.
 
 So an APPEND is not "just a Refresh you can skip" — you actively re-open/reload the board every time you
 add a task, so the user never has to touch it.
+
+**The Quota tab** (second tab on the board) shows how much of each executor's rate limit is gone:
+Codex as a real percentage with a reset countdown, both Claude accounts as tokens burned in rolling
+5h/7d windows plus their last 429, and kimi as a status light — kimi publishes no local quota data,
+so its state is inferred from the last relay result and says so on the card. `scripts/quota-probe.mjs`
+writes `progress/quota.json`, `scripts/quota-loop.sh` re-runs it every 5 minutes, and the tab
+re-fetches on the same cadence and turns amber when the file goes stale. Read it before dispatching a
+long queue: a lane near its ceiling is why work stalls mid-run.
 
 **Speed rules (wall-clock is the metric):**
 - One turn = every independent dispatch you can make. Never launch tasks one per turn.
@@ -279,12 +329,20 @@ criteria, and RE-RUN the gates yourself — never trust an executor's self-repor
 An executor that reports done without hashes has not landed; ask it for them before marking `done`.
 On failure: ONE re-delegation with concrete feedback, then mark `failed`.
 
+**Bucketing rule (learned from a production crash, 26-jul-2026):** when splitting a mixed tree
+into feature commits, the LEFTOVER matters as much as the buckets — after committing, `git status`
+must list ONLY files you can name a reason to hold back, and no committed frontend may depend on a
+held-back backend file (or vice versa). A web half that boards a train without its api half ships a
+client crash. Grep the committed diff for fields/symbols only the leftover provides before pushing.
+
 **Then COMBINE — the last job that is yours alone.** Separately-correct tasks do not add up to a
 working whole on their own: check the seams the executors could not see. Does the frontend call the
 endpoint the backend actually shipped, with the field names it actually returns? Do two tasks
 duplicate a helper, or leave a half-migrated pattern? Does the feature work end to end, not just
-per task? Fix seam defects yourself — integration IS the lead engineer's work, unlike feature code —
-or dispatch a delta task when the fix belongs inside one task's scope. Only after the seams hold:
+per task? Seam defects are DIAGNOSED by the orchestrator but FIXED by an executor: write the
+micro-brief naming the exact file, line and change, and dispatch it to the owning lane — the
+orchestrator writes no product code, not even a one-line color/spec/fallback fix (standing user
+directive, 26-jul-2026; it overrides the older "fix seams yourself" reading of this step). Only after the seams hold:
 final tracker update, then a compact summary + the board path.
 
 ## Tracker payload examples
