@@ -24,9 +24,12 @@ time with `/delegate setup` or a targeted "set backend to codex".
 ## Layout
 
 ```
-SKILL.md                      # the skill itself (Agent Skills format: YAML frontmatter + instructions)
-scripts/claude-b-relay.sh     # headless second-Claude-account relay (optional lane)
-assets/progress-template.html # self-rendering progress board template
+SKILL.md                       # the skill itself (Agent Skills format: YAML frontmatter + instructions)
+scripts/claude-b-relay.sh      # headless second-Claude-account relay (optional lane)
+scripts/quota-probe.mjs        # polls Codex + both Claude accounts + kimi's last state, writes quota.json/.js
+scripts/quota-loop.sh          # re-runs the probe every 5 minutes; start once per machine with nohup
+assets/progress-template.html  # self-rendering progress board template (Board + Quota tabs)
+assets/redesign-directive.md   # saved reference for the "redesign <page>" workflow
 ```
 
 ## Install
@@ -54,9 +57,10 @@ Codex reads `AGENTS.md`. Two options:
 2. Or paste `SKILL.md`'s body directly into `AGENTS.md` under a `## Delegation` heading.
 
 ### Any other agent (Cursor, Gemini CLI, opencode, …)
-`SKILL.md` is plain Markdown instructions plus two portable files (a bash relay and a
-static HTML template). Register the folder wherever your agent loads instruction files
-(rules dir, system prompt, memory), pointing it at `SKILL.md`.
+`SKILL.md` is plain Markdown instructions plus a handful of portable support files (a bash
+relay, two quota scripts, a board template, and a saved workflow directive). Register the
+folder wherever your agent loads instruction files (rules dir, system prompt, memory),
+pointing it at `SKILL.md`.
 
 ## Portability notes (non-Claude agents)
 
@@ -68,7 +72,7 @@ The pipeline is process + shell; a few steps reference Claude-Code-specific tool
 | `Workflow` tool (multi-agent review) | run implement → review → fix as sequential prompts, or spawn parallel subprocesses if your agent supports them |
 | `progress-tracker` agent | edit the board HTML's embedded JSON island directly (keep it valid JSON; never hand-edit outside the island) |
 | Background `Agent`/relay dispatch | `nohup <relay> … &` and poll the artifact dir for `result.json` |
-| Browser-pane board opening | open `http://localhost:<port>/<board>.html` in any browser; serve `progress/` with `python3 -m http.server` |
+| Browser-pane board opening | open `<repo>/progress/<board>.html` directly in any browser (double-click, or `open <path>`) — no server, no port; the board's data is embedded in the file |
 | Executor skills (`/kimi-delegate`, `/codex-delegate`) | any headless CLI works as an executor if it can take a brief file and leave the diff uncommitted; keep the artifact contract (brief.txt / result.json / never commits) |
 
 The config schema, board JSON island, and relay artifact contract are documented inside
@@ -76,5 +80,5 @@ The config schema, board JSON island, and relay artifact contract are documented
 
 ## Requirements
 
-- `git`, `bash`, `python3` (board server), `node` (relays)
+- `git`, `bash`, `node` (relays, quota probe)
 - At least one executor CLI installed and authenticated (kimi / codex / grok / claude)

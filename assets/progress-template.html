@@ -64,16 +64,48 @@ h1{font-size:20px;margin:0}
 .refresh:hover{color:var(--ink);border-color:var(--muted)}
 .refresh .glyph{font-size:13px;line-height:1}
 .hide{display:none}
+.qhead{display:flex;align-items:center;gap:10px;margin:0 0 14px;flex-wrap:wrap}
+.qupdated{color:var(--muted);font-size:12.5px;font-family:ui-monospace,Menlo,monospace;flex:1}
+.qupdated.stale{color:var(--run);font-weight:600}
+.qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.qcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;animation:qfade .3s ease}
+@keyframes qfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.qcard-head{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+.qname{font-weight:600;flex:1}
+.qst{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+.qst-ok{color:var(--done)}.qst-limited{color:var(--fail)}.qst-unknown{color:var(--pend)}
+.dot{width:9px;height:9px;border-radius:99px;flex:none}
+.dot-ok{background:var(--done)}.dot-limited{background:var(--fail)}.dot-unknown{background:var(--pend)}
+.qwin{margin:0 0 12px}
+.qwin-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 5px}
+.qwin-label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.qbar{height:6px;background:var(--pend-bg);border-radius:99px;overflow:hidden}
+.qbar i{display:block;height:100%;width:0;transition:width .4s ease}
+.qbar i.q-ok{background:var(--done)}.qbar i.q-warn{background:var(--run)}.qbar i.q-crit{background:var(--fail)}
+.qpct{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;font-weight:700;color:var(--muted)}
+.qreset{color:var(--muted);font-size:11.5px;margin-top:4px}
+.qtok{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
+.qtok b{color:var(--ink)}
+.qrate{color:var(--fail);font-size:11.5px;font-weight:600;margin-top:8px}
+.qnote{color:var(--muted);font-size:11.5px;margin-top:6px;line-height:1.45;overflow-wrap:anywhere}
+.qfoot{color:var(--muted);font-size:11px;font-family:ui-monospace,Menlo,monospace;margin-top:10px;padding-top:8px;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.qempty{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:28px 24px;max-width:640px;color:var(--muted);line-height:1.7}
+.qempty strong{color:var(--ink)}
+.qempty code{background:var(--pend-bg);padding:2px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink)}
 </style>
 </head>
 <body>
-<div class="wrap" id="app"><div id="serve-note" style="max-width:720px;margin:40px auto;padding:24px;border:1px solid #444;border-radius:12px;font-family:ui-monospace,monospace;line-height:1.7;color:#ddd;background:#1c1c22">
-<strong style="font-size:16px">&#9888;&#65039; This board was opened as a file &mdash; it must be viewed through its local server.</strong><br><br>
-1. Start the server (once):<br>
-<code style="background:#111;padding:2px 6px;border-radius:4px">cd &lt;repo&gt;/progress &amp;&amp; python3 -m http.server 8123</code><br><br>
-2. Then open: <a href="http://localhost:8123/" style="color:#7aa2ff;font-weight:600">http://localhost:8123/</a> and click the board file.<br><br>
-<span style="color:#888">(When the board is served correctly, this notice never appears.)</span>
+<div class="wrap"><div class="filters" id="tabs" role="tablist">
+<button type="button" class="filter active" data-tab="board" role="tab">Board</button>
+<button type="button" class="filter" data-tab="quota" role="tab">Quota</button>
 </div></div>
+<div class="wrap" id="app"><div id="serve-note" style="max-width:720px;margin:40px auto;padding:24px;border:1px solid #444;border-radius:12px;font-family:ui-monospace,monospace;line-height:1.7;color:#ddd;background:#1c1c22">
+<strong style="font-size:16px">&#9888;&#65039; This viewer is not running the board's JavaScript.</strong><br><br>
+Open this same file in a normal browser (Chrome, Safari, Firefox) &mdash; double-click it in Finder or run:<br>
+<code style="background:#111;padding:2px 6px;border-radius:4px">open &lt;repo&gt;/progress/&lt;board&gt;.html</code><br><br>
+<span style="color:#888">(In a normal browser this notice never appears &mdash; the board renders itself, straight from the file.)</span>
+</div></div>
+<div class="wrap hide" id="quota-view"></div>
 
 <script id="progress-data" type="application/json">
 {"product":"","date":"","updatedAt":"","projects":[],"items":[]}
@@ -82,20 +114,10 @@ h1{font-size:20px;margin:0}
 <script>
 document.getElementById('serve-note')?.remove();
 const D = JSON.parse(document.getElementById('progress-data').textContent);
-// file:// self-heal: the board must be viewed over its local server (some
-// embedded browser panes render file:// as a blank page). If the server is up
-// we hop to it; if not, the banner below still beats a silent blank.
-if (location.protocol === 'file:') {
-  const port = D.boardPort || 8123;
-  const served = 'http://localhost:' + port + '/' + location.pathname.split('/').pop();
-  document.getElementById('app').innerHTML =
-    '<div style="padding:24px;font:14px/1.6 ui-monospace,monospace">' +
-    '<strong>This board must be opened via its local server.</strong><br>' +
-    'Trying <a href="' + served + '">' + served + '</a>…<br><br>' +
-    'If nothing happens, start it with:<br>' +
-    '<code>cd &lt;repo&gt;/progress &amp;&amp; python3 -m http.server ' + port + '</code></div>';
-  fetch(served, { method: 'HEAD' }).then(() => location.replace(served)).catch(() => {});
-}
+// Boards open as plain file:// pages by design (26-jul-2026 standing directive) — the data
+// lives in the embedded JSON island above, so there is nothing to redirect to a server for.
+// A previous self-heal here used to bounce file:// opens to a localhost server; that server
+// convention is gone, so this page no longer probes ports or navigates away from itself.
 const pill = s => `<span class="pill s-${s}">${s.replace('_',' ')}</span>`;
 
 // progress is DERIVED, never hand-authored: criteria met if reported, else the status floor.
@@ -205,6 +227,116 @@ app.querySelector('#filters').addEventListener('click', e=>{
 });
 app.querySelector('#refresh').addEventListener('click', ()=>window.location.reload());
 applyFilter(loadFilter());
+</script>
+
+<script>
+// --- Quota tab: reads quota.json (written by the probe) from the same directory.
+// Never touches the board's data island or the board DOM — switching tabs only
+// toggles visibility of #app vs #quota-view.
+const qview = document.getElementById('quota-view');
+const tabsEl = document.getElementById('tabs');
+let quotaData = null;
+
+const qAgo = ts => {
+  const s = Math.max(0, Math.round((Date.now()-new Date(ts))/1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s/60);
+  if (m < 60) return m + ' min ago';
+  const h = Math.floor(m/60), rm = m%60;
+  if (h < 24) return h + 'h' + (rm ? ' ' + rm + 'm' : '') + ' ago';
+  return Math.floor(h/24) + 'd ago';
+};
+const qUntil = ts => {
+  const s = Math.round((new Date(ts)-Date.now())/1000);
+  if (s <= 0) return 'reset due now';
+  const m = Math.floor(s/60);
+  if (m < 60) return 'resets in ' + Math.max(1,m) + 'm';
+  const h = Math.floor(m/60), rm = m%60;
+  if (h < 48) return 'resets in ' + h + 'h' + (rm ? ' ' + rm + 'm' : '');
+  return 'resets in ' + Math.floor(h/24) + 'd ' + (h%24) + 'h';
+};
+// Billions are routine once cache reads are counted, and "10530.1M" is a number
+// nobody can read at a glance.
+const qTok = n => n>=1e9 ? (n/1e9).toFixed(1).replace(/\.0$/,'')+'B'
+  : n>=1e6 ? (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'
+  : n>=1e3 ? Math.round(n/1e3)+'k' : String(n);
+const qState = s => s==='ok' ? 'ok' : s==='limited' ? 'limited' : 'unknown';
+const qDot = s => `<span class="dot dot-${qState(s)}"></span>`;
+const qBarCls = p => p>=85 ? 'q-crit' : p>=60 ? 'q-warn' : 'q-ok';
+
+const qPercent = a => (a.windows||[]).map(w=>`<div class="qwin">
+  <div class="qwin-head"><span class="qwin-label">${w.label}</span><span class="qpct">${w.usedPercent}%</span></div>
+  <div class="qbar"><i class="${qBarCls(w.usedPercent)}" data-w="${w.usedPercent}"></i></div>
+  ${w.resetsAt?`<div class="qreset">${qUntil(w.resetsAt)}</div>`:''}
+</div>`).join('');
+const qTokens = a => (a.windows||[]).map(w=>`<div class="qwin">
+  <div class="qwin-head"><span class="qwin-label">${w.label}</span>
+  <span class="qtok"><b>${qTok(w.tokens||0)}</b> tok · ${w.messages||0} msg</span></div>
+</div>`).join('') + (a.lastRateLimitAt?`<div class="qrate">rate-limited ${qAgo(a.lastRateLimitAt)}</div>`:'');
+const qCard = a => `<div class="qcard">
+  <div class="qcard-head">${qDot(a.state)}<span class="qname">${a.label}</span>
+    ${a.plan?`<span class="kind">${a.plan}</span>`:''}<span class="qst qst-${qState(a.state)}">${qState(a.state)}</span></div>
+  ${a.kind==='percent' ? qPercent(a) : a.kind==='tokens' ? qTokens(a) : (a.note?`<div class="qnote">${a.note}</div>`:'')}
+  <div class="qfoot">${a.source||''}${a.observedAt?` · observed ${qAgo(a.observedAt)}`:''}</div>
+</div>`;
+const qEmpty = `<div class="qempty"><strong>No quota data yet.</strong><br>
+  The quota probe has not written <code>quota.json</code> to this directory yet &mdash; this is normal on first run. Start it with:<br><br>
+  <code>node ~/.claude/skills/delegate/scripts/quota-probe.mjs --out &lt;progress-dir&gt;</code><br><br>
+  This view re-checks for the file every 5 minutes.
+</div>`;
+
+function renderQuota(){
+  const q = quotaData;
+  const stale = q && (Date.now()-new Date(q.updatedAt))/60000 > 15;
+  qview.innerHTML = `<div class="qhead"><span class="stats-label">Agent quota</span>`
+    + `<span class="qupdated${stale?' stale':''}" id="qupdated">${q?'updated '+qAgo(q.updatedAt):''}</span>`
+    + `<button type="button" id="qrefresh" class="refresh" aria-label="Refresh quota"><span class="glyph" aria-hidden="true">↻</span>Refresh</button></div>`
+    + (q ? `<div class="qgrid">${(q.agents||[]).map(qCard).join('')}</div>` : qEmpty);
+  qview.querySelector('#qrefresh').addEventListener('click', fetchQuota);
+  if (q) {
+    const fill = ()=>qview.querySelectorAll('.qbar i').forEach(b=>{ b.style.width = Math.max(0,Math.min(100,+b.dataset.w||0))+'%'; });
+    requestAnimationFrame(()=>requestAnimationFrame(fill));
+    setTimeout(fill, 60); // fallback where rAF never fires (throttled/headless)
+  }
+}
+async function fetchQuota(){
+  // Boards open as plain file:// pages, where fetch() is blocked — so the
+  // probe writes quota.js (window.__QUOTA__ = …) beside quota.json and a
+  // cache-busted <script src> re-reads it; fetch stays as the http-mode path.
+  const viaScript = () => new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'quota.js?ts=' + Date.now();
+    s.onload = () => { resolve(window.__QUOTA__ ?? null); s.remove(); };
+    s.onerror = () => { resolve(null); s.remove(); };
+    document.head.appendChild(s);
+  });
+  quotaData = await viaScript();
+  if (!quotaData) {
+    try {
+      const r = await fetch('quota.json', {cache:'no-store'});
+      if (!r.ok) throw new Error('no quota.json');
+      quotaData = await r.json();
+    } catch(e) { quotaData = null; }
+  }
+  renderQuota();
+}
+tabsEl.addEventListener('click', e=>{
+  const b = e.target.closest('[data-tab]');
+  if (!b) return;
+  tabsEl.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('active', t===b));
+  const quota = b.dataset.tab==='quota';
+  document.getElementById('app').classList.toggle('hide', quota);
+  qview.classList.toggle('hide', !quota);
+  if (quota) renderQuota();
+});
+fetchQuota();
+setInterval(fetchQuota, 5*60*1000);
+setInterval(()=>{
+  const el = document.getElementById('qupdated');
+  if (!quotaData || !el) return;
+  el.textContent = 'updated ' + qAgo(quotaData.updatedAt);
+  el.classList.toggle('stale', (Date.now()-new Date(quotaData.updatedAt))/60000 > 15);
+}, 30000);
 </script>
 </body>
 </html>
